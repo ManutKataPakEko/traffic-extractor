@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +25,7 @@ type RequestPayload struct {
 }
 
 var logFile *os.File
+var sensitiveRegex = regexp.MustCompile(`(?i)(password|password2|pass|passwd)=([^&]+)`)
 
 func main() {
 	// Initialize log file (for file logging mode)
@@ -62,14 +64,20 @@ func main() {
 		delete(headers, "Authorization")
 		delete(headers, "Cookie")
 
+		path := c.Request.URL.Path
+
+		if original := c.GetHeader("X-Original-Uri"); original != "" {
+			path = original
+		}
+
 		payload := RequestPayload{
 			Timestamp: time.Now().Format(time.RFC3339),
 			IP:        c.ClientIP(),
 			Method:    c.Request.Method,
-			Path:      c.Request.URL.Path,
+			Path:      path,
 			Query:     c.Request.URL.RawQuery,
 			Headers:   headers,
-			Body:      string(bodyBytes),
+			Body:      sanitizeBody(string(bodyBytes)),
 		}
 
 		// forwardToML(payload)
@@ -135,4 +143,8 @@ func debugPrint(payload RequestPayload) {
 
 	fmt.Println(string(jsonData))
 	fmt.Println("---------------------------------------------------")
+}
+
+func sanitizeBody(body string) string {
+	return sensitiveRegex.ReplaceAllString(body, "$1=***REDACTED***")
 }
