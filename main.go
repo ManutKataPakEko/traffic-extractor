@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,7 +10,12 @@ import (
 	"regexp"
 	"time"
 
+	attackdetectionpb "request-extractor/proto"
+
 	"github.com/gofiber/fiber/v2"
+	"github.com/joho/godotenv"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type RequestPayload struct {
@@ -23,8 +28,15 @@ type RequestPayload struct {
 	Body      string            `json:"body"`
 }
 
+type EnrichedPayload struct {
+	RequestPayload
+	Prediction string `json:"prediction,omitempty"`
+}
+
 var logFile *os.File
 var sensitiveRegex = regexp.MustCompile(`(?i)(password|password2|pass|passwd)=([^&]+)`)
+var mlConn *grpc.ClientConn
+var mlClient attackdetectionpb.AttackDetectionClient
 
 func main() {
 	// Initialize log file (for file logging mode)
@@ -38,6 +50,15 @@ func main() {
 		log.Fatal(err)
 	}
 	defer logFile.Close()
+
+	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) {
+		log.Printf("failed to load .env: %v", err)
+	}
+
+	if err := initMLClient(); err != nil {
+		log.Fatalf("failed to initialize ML gRPC client: %v", err)
+	}
+	defer mlConn.Close()
 
 	r := fiber.New()
 
@@ -75,11 +96,11 @@ func main() {
 			Body:      sanitizeBody(string(bodyBytes)),
 		}
 
-		// forwardToML(payload)
-		writeToFile(payload)
+		enrichedPayload := forwardToML(payload)
+		writeToFile(enrichedPayload)
 
 		// For now default to debug
-		debugPrint(payload)
+		debugPrint(enrichedPayload)
 
 		return c.SendStatus(http.StatusOK)
 	})
@@ -87,30 +108,52 @@ func main() {
 	r.Listen(":8081")
 }
 
-// Send to ML Engine (HTTP POST)
-func forwardToML(payload RequestPayload) {
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		log.Println("JSON marshal error:", err)
-		return
+func initMLClient() error {
+	mlAddr := os.Getenv("ML_RPC_ADDR")
+	if mlAddr == "" {
+		mlAddr = "localhost:9000"
 	}
 
-	resp, err := http.Post(
-		"http://localhost:9000/analyze",
-		"application/json",
-		bytes.NewBuffer(jsonData),
-	)
-
+	conn, err := grpc.NewClient(mlAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Println("ML POST error:", err)
-		return
+		return err
 	}
-	defer resp.Body.Close()
+
+	mlConn = conn
+	mlClient = attackdetectionpb.NewAttackDetectionClient(conn)
+	return nil
+}
+
+// Send to ML Engine (gRPC Predict)
+func forwardToML(payload RequestPayload) EnrichedPayload {
+	enriched := EnrichedPayload{RequestPayload: payload}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	resp, err := mlClient.Predict(ctx, &attackdetectionpb.PredictRequest{
+		Timestamp: payload.Timestamp,
+		Ip:        payload.IP,
+		Method:    payload.Method,
+		Path:      payload.Path,
+		Query:     payload.Query,
+		Headers:   payload.Headers,
+		Body:      payload.Body,
+	})
+	if err != nil {
+		log.Println("ML RPC error:", err)
+		return enriched
+	}
+
+	if resp != nil {
+		enriched.Prediction = resp.GetPrediction()
+	}
+
+	return enriched
 }
 
 // Write JSON Line to File
-func writeToFile(payload RequestPayload) {
+func writeToFile(payload EnrichedPayload) {
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
@@ -128,7 +171,7 @@ func writeToFile(payload RequestPayload) {
 }
 
 // Debug Mode (Print to Terminal)
-func debugPrint(payload RequestPayload) {
+func debugPrint(payload EnrichedPayload) {
 
 	jsonData, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
