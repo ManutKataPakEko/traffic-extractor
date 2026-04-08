@@ -4,14 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
 	"regexp"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 )
 
 type RequestPayload struct {
@@ -40,42 +39,38 @@ func main() {
 	}
 	defer logFile.Close()
 
-	r := gin.Default()
+	r := fiber.New()
 
-	r.Any("/*path", func(c *gin.Context) {
+	r.All("/*", func(c *fiber.Ctx) error {
 
 		// Limit body size to 1MB
-		c.Request.Body = http.MaxBytesReader(
-			c.Writer,
-			c.Request.Body,
-			1<<20,
-		)
-
-		bodyBytes, _ := io.ReadAll(c.Request.Body)
-		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		bodyBytes := c.Body()
+		if len(bodyBytes) > (1 << 20) {
+			return c.SendStatus(http.StatusRequestEntityTooLarge)
+		}
 
 		// Extract headers
 		headers := make(map[string]string)
-		for k, v := range c.Request.Header {
-			headers[k] = v[0]
-		}
+		c.Request().Header.VisitAll(func(key, value []byte) {
+			headers[string(key)] = string(value)
+		})
 
 		// Remove sensitive headers
 		delete(headers, "Authorization")
 		delete(headers, "Cookie")
 
-		path := c.Request.URL.Path
+		path := c.Path()
 
-		if original := c.GetHeader("X-Original-Uri"); original != "" {
+		if original := c.Get("X-Original-Uri"); original != "" {
 			path = original
 		}
 
 		payload := RequestPayload{
 			Timestamp: time.Now().Format(time.RFC3339),
-			IP:        c.ClientIP(),
-			Method:    c.Request.Method,
+			IP:        c.IP(),
+			Method:    c.Method(),
 			Path:      path,
-			Query:     c.Request.URL.RawQuery,
+			Query:     string(c.Request().URI().QueryString()),
 			Headers:   headers,
 			Body:      sanitizeBody(string(bodyBytes)),
 		}
@@ -86,10 +81,10 @@ func main() {
 		// For now default to debug
 		debugPrint(payload)
 
-		c.Status(http.StatusOK)
+		return c.SendStatus(http.StatusOK)
 	})
 
-	r.Run(":8081")
+	r.Listen(":8081")
 }
 
 // Send to ML Engine (HTTP POST)
