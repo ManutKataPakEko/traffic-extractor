@@ -31,6 +31,13 @@ func resolvePath(c *fiber.Ctx) string {
 	return c.Path()
 }
 
+func resolveClientIP(c *fiber.Ctx) string {
+	if cfIP := c.Get("CF-Connecting-IP"); cfIP != "" {
+		return cfIP
+	}
+	return c.IP()
+}
+
 func getenvOrDefault(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value

@@ -53,7 +53,7 @@ func (a *App) buildPayload(c *fiber.Ctx) (RequestPayload, int, error) {
 
 	return RequestPayload{
 		Timestamp: time.Now().Format(time.RFC3339),
-		IP:        c.IP(),
+		IP:        resolveClientIP(c),
 		Method:    c.Method(),
 		Path:      resolvePath(c),
 		Query:     string(c.Request().URI().QueryString()),
