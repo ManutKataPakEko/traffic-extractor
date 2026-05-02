@@ -24,11 +24,22 @@ func extractFilteredHeaders(c *fiber.Ctx) map[string]string {
 	return headers
 }
 
-func resolvePath(c *fiber.Ctx) string {
-	if original := c.Get("X-Original-Uri"); original != "" {
-		return original
+func resolveClientIP(c *fiber.Ctx) string {
+	if cfIP := c.Get("CF-Connecting-IP"); cfIP != "" {
+		return cfIP
 	}
-	return c.Path()
+
+	if xff := c.Get("X-Forwarded-For"); xff != "" {
+		// XFF can contain multiple IPs: client, proxy1, proxy2
+		// take the first one
+		return strings.Split(xff, ",")[0]
+	}
+
+	if xrip := c.Get("X-Real-IP"); xrip != "" {
+		return xrip
+	}
+
+	return c.IP()
 }
 
 func resolveClientIP(c *fiber.Ctx) string {
