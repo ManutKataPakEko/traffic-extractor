@@ -24,6 +24,13 @@ func extractFilteredHeaders(c *fiber.Ctx) map[string]string {
 	return headers
 }
 
+func resolvePath(c *fiber.Ctx) string {
+	if original := c.Get("X-Original-Uri"); original != "" {
+		return original
+	}
+	return c.Path()
+}
+
 func resolveClientIP(c *fiber.Ctx) string {
 	if cfIP := c.Get("CF-Connecting-IP"); cfIP != "" {
 		return cfIP
@@ -39,13 +46,6 @@ func resolveClientIP(c *fiber.Ctx) string {
 		return xrip
 	}
 
-	return c.IP()
-}
-
-func resolveClientIP(c *fiber.Ctx) string {
-	if cfIP := c.Get("CF-Connecting-IP"); cfIP != "" {
-		return cfIP
-	}
 	return c.IP()
 }
 
