@@ -124,4 +124,3 @@ The service writes one JSON object per line to:
 
 - Sensitive body parameters such as passwords are redacted before forwarding.
 - Authorization and Cookie headers are removed before the payload is sent to the ML service.
-- The ML RPC call currently uses a 2-second timeout.
